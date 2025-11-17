@@ -78,4 +78,53 @@ router.post('/login', async (req, res) => {
   }
 });
 
+router.post('/register', async (req, res) => {
+  try {
+    let { fullName, email, password, phone, role } = req.body;
+
+    // Validate required fields
+    if (!fullName || !email || !password) {
+      return res.status(400).json({ error: "All required fields must be filled" });
+    }
+
+    // Normalize email
+    email = email.trim().toLowerCase();
+
+    // Check if email already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ error: "Email already exists" });
+    }
+
+    // Create new user (password will be hashed by schema pre-save hook)
+    const newUser = new User({
+      fullName,
+      email,
+      password,           // ✅ store plain password
+      phone: phone || "",
+      role: role || "customer",
+      status: "pending",
+    });
+
+    await newUser.save();
+
+    res.json({
+      success: true,
+      message: "Account created successfully",
+      user: {
+        id: newUser._id,
+        fullName: newUser.fullName,
+        email: newUser.email,
+        phone: newUser.phone,
+        role: newUser.role,
+        status: newUser.status,
+      },
+    });
+
+  } catch (err) {
+    console.error("❌ Error during registration:", err);
+    res.status(500).json({ error: "Server error during registration" });
+  }
+});
+
 export default router;
