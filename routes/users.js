@@ -12,39 +12,44 @@ const router = express.Router();
 // =============================
 router.post("/add", authMiddleware, async (req, res) => {
   try {
+    // Only admins can add users
     if (req.user.role !== "admin") {
       return res.status(403).json({ error: "Access denied. Admins only." });
     }
 
-    const { full_name, email, phone, role, password } = req.body;
+    // Destructure fields from request body
+    const { fullName, email, phone, role, password } = req.body;
 
-    if (!full_name || !email || !password || !role) {
+    // Validate required fields
+    if (!fullName || !email || !password || !role) {
       return res.status(400).json({ error: "All required fields must be filled" });
     }
 
+    // Check if email already exists
     const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
     if (existingUser) {
       return res.status(409).json({ error: "Email already in use" });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-
+    // Create new user
     const newUser = new User({
-      full_name,
+      fullName,
       email: email.toLowerCase().trim(),
       phone,
-      password: hashedPassword,
+      password, // pre-save middleware will hash this
       role,
       status: "pending",
     });
 
     await newUser.save();
+
     res.status(201).json({ message: "User created successfully", user: newUser });
   } catch (error) {
     console.error("Add User Error:", error);
     res.status(500).json({ error: "Server error during user creation" });
   }
 });
+
 
 // =============================
 // LOGIN USER
@@ -218,5 +223,19 @@ router.patch("/update-status/:id", authMiddleware, async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
+/// GET /api/users/suppliers
+router.get("/suppliers", authMiddleware, async (req, res) => {
+  try {
+    const suppliers = await User.find({ role: "supplier", status: "active" })
+      .select("_id fullName email phone");
+
+    res.json(suppliers);
+  } catch (err) {
+    console.error("❌ Supplier fetch error:", err);
+    res.status(500).json({ error: "Failed to fetch suppliers" });
+  }
+});
+
 
 export default router;

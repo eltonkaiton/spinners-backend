@@ -38,12 +38,11 @@ const verifyToken = (req, res, next) => {
 };
 
 /* ======================================================
-   🛒 CREATE NEW ORDER
+   🛒 CREATE NEW ORDER (UPDATED FOR INVENTORY ORDERS)
 ====================================================== */
 router.post("/", verifyToken, async (req, res) => {
   try {
     const {
-      userId,
       productId,
       quantity,
       totalPrice,
@@ -51,45 +50,89 @@ router.post("/", verifyToken, async (req, res) => {
       paymentTiming,
       paymentCode,
       deliveryAddress,
+      supplierId, // For inventory orders
+      artisanId,  // For inventory orders
+      orderType = "customer", // "customer" or "inventory"
     } = req.body;
 
-    if (!userId || !productId || !quantity || !totalPrice) {
-      return res.status(400).json({
-        success: false,
-        message: "Missing required order fields.",
-      });
+    // Validate required fields based on order type
+    if (orderType === "inventory") {
+      // Inventory order validation
+      if (!productId || !quantity || !supplierId) {
+        return res.status(400).json({
+          success: false,
+          message: "Missing required fields for inventory order: productId, quantity, supplierId",
+        });
+      }
+    } else {
+      // Customer order validation
+      if (!productId || !quantity || !totalPrice) {
+        return res.status(400).json({
+          success: false,
+          message: "Missing required fields for customer order: productId, quantity, totalPrice",
+        });
+      }
     }
 
     let paymentStatus = "pending";
     let orderStatus = "pending";
 
     if (paymentTiming === "beforeDelivery" && paymentCode) {
-      paymentStatus = "paid"; // waiting for finance approval
+      paymentStatus = "paid";
     }
 
-    const order = new Order({
-      userId,
+    // Build order data
+    const orderData = {
+      createdBy: req.user.id,
       productId,
       quantity,
-      totalPrice,
-      paymentMethod,
-      paymentTiming,
+      paymentMethod: paymentMethod || "cash",
+      paymentTiming: paymentTiming || "afterDelivery",
       paymentCode: paymentCode || null,
       deliveryAddress: deliveryAddress || "",
       paymentStatus,
       orderStatus,
-    });
+      orderType,
+    };
 
+    // Add fields based on order type
+    if (orderType === "inventory") {
+      orderData.supplierId = supplierId;
+      orderData.artisanId = artisanId || req.user.id;
+      orderData.totalPrice = totalPrice || 0;
+    } else {
+      orderData.userId = req.body.userId || req.user.id;
+      orderData.totalPrice = totalPrice;
+    }
+
+    const order = new Order(orderData);
     await order.save();
 
-    await order.populate([
-      { path: "userId", select: "fullName email" },
+    // Enhanced population for different order types
+    const populatePaths = [
       { path: "productId", select: "name price image artisanName category" },
-    ]);
+    ];
+
+    if (orderType === "inventory") {
+      populatePaths.push(
+        { path: "supplierId", select: "fullName email phone" },
+        { path: "artisanId", select: "fullName email phone" }
+      );
+    } else {
+      populatePaths.push(
+        { path: "userId", select: "fullName email" }
+      );
+    }
+
+    populatePaths.push({ path: "driverId", select: "fullName email" });
+
+    await order.populate(populatePaths);
 
     res.status(201).json({
       success: true,
-      message: "Order created successfully",
+      message: `${
+        orderType === "inventory" ? "Inventory" : "Customer"
+      } order created successfully`,
       order,
     });
   } catch (error) {
@@ -108,7 +151,6 @@ router.post("/", verifyToken, async (req, res) => {
 router.get("/user/:id", verifyToken, async (req, res) => {
   const { id } = req.params;
 
-  // Compare strings for safety
   if (req.user.id !== id.toString() && !["admin", "finance"].includes(req.user.role)) {
     return res.status(403).json({ success: false, message: "Access denied." });
   }
@@ -132,6 +174,66 @@ router.get("/user/:id", verifyToken, async (req, res) => {
 });
 
 /* ======================================================
+   🎨 GET ARTISAN'S INVENTORY ORDERS (NEW ENDPOINT)
+====================================================== */
+router.get("/artisan/inventory-orders", verifyToken, async (req, res) => {
+  try {
+    const orders = await Order.find({ 
+      artisanId: req.user.id,
+      orderType: "inventory"
+    })
+      .populate("productId", "name price category")
+      .populate("supplierId", "fullName email phone")
+      .populate("driverId", "fullName email")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({ 
+      success: true, 
+      count: orders.length, 
+      orders 
+    });
+  } catch (error) {
+    console.error("❌ Fetch artisan inventory orders error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch inventory orders.",
+      error: error.message,
+    });
+  }
+});
+
+/* ======================================================
+   👥 GET SUPPLIERS FOR ARTISANS (NEW ENDPOINT)
+====================================================== */
+router.get("/suppliers/for-artisan", verifyToken, async (req, res) => {
+  try {
+    // Allow artisans to view suppliers
+    if (!["artisan", "admin", "supervisor"].includes(req.user.role)) {
+      return res.status(403).json({ 
+        success: false, 
+        message: "Access denied. Artisans, admins, and supervisors only." 
+      });
+    }
+
+    const suppliers = await User.find({ role: "supplier" })
+      .select("fullName email phone businessName address");
+
+    res.status(200).json({ 
+      success: true, 
+      count: suppliers.length, 
+      suppliers 
+    });
+  } catch (error) {
+    console.error("❌ Fetch suppliers error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch suppliers.",
+      error: error.message,
+    });
+  }
+});
+
+/* ======================================================
    🧑‍✈️ GET USERS WITH ROLE DRIVER
 ====================================================== */
 router.get("/drivers/list", verifyToken, async (req, res) => {
@@ -149,7 +251,7 @@ router.get("/drivers/list", verifyToken, async (req, res) => {
 });
 
 /* ======================================================
-   🚚 GET DRIVER’S ASSIGNED ORDERS
+   🚚 GET DRIVER'S ASSIGNED ORDERS
 ====================================================== */
 router.get("/driver", verifyToken, async (req, res) => {
   try {
@@ -187,6 +289,8 @@ router.get("/", async (req, res) => {
       .populate("userId", "fullName email")
       .populate("productId", "name price image artisanName category")
       .populate("driverId", "fullName email")
+      .populate("supplierId", "fullName email")
+      .populate("artisanId", "fullName email")
       .sort({ createdAt: -1 });
 
     res.status(200).json({ success: true, count: orders.length, orders });
@@ -214,6 +318,8 @@ router.get("/:id", async (req, res) => {
     const order = await Order.findById(id)
       .populate("userId", "fullName email")
       .populate("productId", "name price image artisanName category")
+      .populate("supplierId", "fullName email")
+      .populate("artisanId", "fullName email")
       .populate("driverId", "fullName email");
 
     if (!order)
@@ -342,15 +448,15 @@ router.get("/supervisor", verifyToken, async (req, res) => {
     let orders = await Order.find()
       .populate("userId", "fullName email")
       .populate("productId", "name price image artisanName category")
+      .populate("supplierId", "fullName email")
+      .populate("artisanId", "fullName email")
       .populate("driverId", "fullName email")
       .sort({ createdAt: -1 });
 
     // Ensure valid ObjectId references
     orders = orders.filter(
       (o) =>
-        o.userId &&
         o.productId &&
-        mongoose.Types.ObjectId.isValid(o.userId._id) &&
         mongoose.Types.ObjectId.isValid(o.productId._id)
     );
 
@@ -370,7 +476,7 @@ router.put("/:id/mark-received", async (req, res) => {
   try {
     const order = await Order.findByIdAndUpdate(
       req.params.id,
-      { orderStatus: "Received" },
+      { orderStatus: "received" },
       { new: true }
     );
     if (!order) return res.status(404).json({ success: false, message: "Order not found" });
@@ -382,7 +488,7 @@ router.put("/:id/mark-received", async (req, res) => {
 });
 
 // PUT /api/orders/:id/mark-complete
-router.put("/:id/mark-complete", async (req, res) => {
+router.put("/:id/mark-complete", verifyToken, async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
 
@@ -395,7 +501,6 @@ router.put("/:id/mark-complete", async (req, res) => {
       return res.status(403).json({ success: false, message: "Access denied. Supervisor only." });
     }
 
-    // ✅ Use lowercase value as per schema
     order.orderStatus = "completed";
     await order.save();
 
@@ -406,8 +511,165 @@ router.put("/:id/mark-complete", async (req, res) => {
   }
 });
 
+/* ======================================================
+   👤 GET MY ORDERS (FOR ARTISANS - CUSTOMER ORDERS)
+====================================================== */
+router.get("/my-orders", verifyToken, async (req, res) => {
+  try {
+    const orders = await Order.find({ 
+      createdBy: req.user.id,
+      orderType: "customer" // Only customer orders
+    })
+      .populate("productId", "name price")
+      .populate("userId", "fullName email")
+      .populate("driverId", "fullName email")
+      .sort({ createdAt: -1 });
 
+    res.status(200).json({ success: true, count: orders.length, orders });
+  } catch (err) {
+    console.error("❌ Fetch artisan orders error:", err);
+    res.status(500).json({ success: false, message: "Failed to fetch your orders", error: err.message });
+  }
+});
+/* ======================================================
+   👥 GET SUPPLIER'S ORDERS
+====================================================== */
+router.get("/supplier/my-orders", verifyToken, async (req, res) => {
+  try {
+    if (req.user.role !== "supplier") {
+      return res.status(403).json({ 
+        success: false, 
+        message: "Access denied. Supplier only." 
+      });
+    }
 
+    const supplierId = req.user.id;
 
+    // Find orders where supplierId matches
+    const orders = await Order.find({ 
+      $or: [
+        { supplierId: supplierId },
+        { supplierId: new mongoose.Types.ObjectId(supplierId) }
+      ]
+    })
+      .populate("productId", "name price category")
+      .populate("artisanId", "fullName email phone")
+      .populate("userId", "fullName email")
+      .populate("driverId", "fullName email")
+      .sort({ createdAt: -1 });
 
+    res.status(200).json({ 
+      success: true, 
+      count: orders.length, 
+      orders 
+    });
+  } catch (error) {
+    console.error("❌ Fetch supplier orders error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch supplier orders.",
+      error: error.message,
+    });
+  }
+});
+
+/* ======================================================
+   🔄 UPDATE ORDER STATUS
+====================================================== */
+router.put("/update-status/:id", verifyToken, async (req, res) => {
+  try {
+    const { status } = req.body;
+
+    const updatedOrder = await Order.findByIdAndUpdate(
+      req.params.id,
+      { orderStatus: status },
+      { new: true }
+    );
+
+    if (!updatedOrder)
+      return res.status(404).json({ success: false, message: "Order not found." });
+
+    res.json({ success: true, order: updatedOrder });
+  } catch (err) {
+    console.error("❌ Update order status error:", err);
+    res.status(500).json({ success: false, message: "Server error." });
+  }
+});
+
+/* ======================================================
+   🚚 MARK ORDER AS DELIVERED (Supplier-specific)
+====================================================== */
+router.put("/mark-delivered/:id", verifyToken, async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    // Check if user is the supplier for this order
+    const isSupplier = order.supplierId?.toString() === req.user.id || 
+                      order.supplierId?._id?.toString() === req.user.id;
+
+    if (!isSupplier && req.user.role !== "admin") {
+      return res.status(403).json({ 
+        success: false, 
+        message: "Access denied. Only the assigned supplier can mark as delivered." 
+      });
+    }
+
+    order.orderStatus = "delivered";
+    order.deliveredAt = new Date();
+    await order.save();
+
+    res.json({ 
+      success: true, 
+      message: "Order marked as delivered", 
+      order 
+    });
+  } catch (err) {
+    console.error("❌ Mark as delivered error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Optional: Clean up the markAsDelivered function to reduce console noise
+const markAsDelivered = async (orderId) => {
+  try {
+    setLoading(true);
+
+    // First try the direct mark-delivered endpoint
+    try {
+      const response = await axios.put(
+        `${API_BASE_URL}/orders/mark-delivered/${orderId}`,
+        {},
+        { 
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          } 
+        }
+      );
+      console.log("✅ Order delivered:", response.data);
+      Alert.alert("Success", "Order marked as delivered!");
+      loadData();
+      setShowDeliveryModal(false);
+      return;
+    } catch (firstError) {
+      // If mark-delivered fails, silently fallback to update-status
+      if (firstError.response?.status === 404) {
+        console.log("🔄 Using update-status endpoint for delivery...");
+        await updateOrderStatus(orderId, 'delivered');
+      } else {
+        throw firstError; // Re-throw other errors
+      }
+    }
+    
+  } catch (err) {
+    console.error("❌ Mark as delivered error:", err);
+    Alert.alert("Error", "Failed to mark order as delivered. Please try again.");
+  } finally {
+    setLoading(false);
+  }
+};
 export default router;

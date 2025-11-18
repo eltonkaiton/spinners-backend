@@ -10,13 +10,13 @@ export const authMiddleware = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     if (!decoded?.id) return res.status(401).json({ success: false, message: "Invalid token." });
 
-    const user = await User.findById(decoded.id).select("full_name email role");
+    const user = await User.findById(decoded.id).select("fullName email role"); // ← Changed to fullName
     if (!user) return res.status(404).json({ success: false, message: "User not found." });
 
     // Ensure id is string for consistency
     req.user = {
       id: String(user._id),
-      full_name: user.full_name,
+      fullName: user.fullName, // ← Changed to fullName
       email: user.email,
       role: user.role,
     };
