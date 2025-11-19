@@ -238,4 +238,133 @@ router.get("/suppliers", authMiddleware, async (req, res) => {
 });
 
 
+// Get support users (artisans, finance, inventory, etc.)
+router.get('/support', authMiddleware, async (req, res) => {
+  try {
+    const supportRoles = ['artisan', 'finance', 'inventory', 'admin', 'supervisor', 'supplier'];
+    
+    const supportUsers = await User.find({
+      role: { $in: supportRoles },
+      status: 'active'
+    }).select('name email role online lastSeen avatar specialty');
+
+    // Enhance with support-specific information
+    const enhancedUsers = supportUsers.map(user => {
+      const supportInfo = getSupportUserInfo(user.role);
+      return {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        online: user.online || false,
+        lastSeen: user.lastSeen || new Date(),
+        avatar: user.avatar,
+        description: supportInfo.description,
+        expertise: supportInfo.expertise,
+        responseTime: supportInfo.responseTime
+      };
+    });
+
+    res.json({
+      success: true,
+      supportUsers: enhancedUsers
+    });
+  } catch (error) {
+    console.error('Get support users error:', error);
+    res.status(500).json({ error: 'Failed to fetch support users' });
+  }
+});
+
+// Get user online status
+router.get('/:userId/status', authMiddleware, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findById(userId).select('online lastSeen');
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json({
+      success: true,
+      online: user.online || false,
+      lastSeen: user.lastSeen
+    });
+  } catch (error) {
+    console.error('Get user status error:', error);
+    res.status(500).json({ error: 'Failed to fetch user status' });
+  }
+});
+
+// Update user online status
+router.put('/:userId/status', authMiddleware, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { online } = req.body;
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { 
+        online: online,
+        lastSeen: new Date()
+      },
+      { new: true }
+    ).select('online lastSeen');
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json({
+      success: true,
+      online: user.online,
+      lastSeen: user.lastSeen
+    });
+  } catch (error) {
+    console.error('Update user status error:', error);
+    res.status(500).json({ error: 'Failed to update user status' });
+  }
+});
+
+// Helper function for support user information
+function getSupportUserInfo(role) {
+  const supportInfo = {
+    artisan: {
+      description: 'Custom orders & artisan services',
+      expertise: 'Textiles, Jewelry, Crafts',
+      responseTime: 'Usually replies within 1 hour'
+    },
+    inventory: {
+      description: 'Product availability & stock queries',
+      expertise: 'Stock Management, Product Availability',
+      responseTime: 'Usually replies within 30 minutes'
+    },
+    finance: {
+      description: 'Payments & billing assistance',
+      expertise: 'Financial Services, Payments',
+      responseTime: 'Usually replies within 2 hours'
+    },
+    admin: {
+      description: 'Administrative support',
+      expertise: 'System Administration',
+      responseTime: 'Usually replies within 4 hours'
+    },
+    supervisor: {
+      description: 'Supervisory assistance',
+      expertise: 'Operations Management',
+      responseTime: 'Usually replies within 1 hour'
+    },
+    supplier: {
+      description: 'Supplier relations & orders',
+      expertise: 'Supply Chain, Vendor Management',
+      responseTime: 'Usually replies within 2 hours'
+    }
+  };
+
+  return supportInfo[role] || {
+    description: 'General support and assistance',
+    expertise: 'Customer Service',
+    responseTime: 'Usually replies within 1 hour'
+  };
+}
 export default router;
