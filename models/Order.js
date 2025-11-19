@@ -54,13 +54,50 @@ const OrderSchema = new mongoose.Schema(
       type: String, 
       enum: [
         "pending", "processing", "approved", "rejected", 
-        "cancelled", "completed", "delivered", "received"
+        "cancelled", "completed", "delivered", "received",
+        "shipped", "in_progress"
       ], 
       default: "pending" 
     },
     notes: { type: String }, // Added for order notes
+
+    // New timestamp fields for order lifecycle tracking
+    receivedAt: { 
+      type: Date, 
+      default: null 
+    },    // When artisan receives the order
+    deliveredAt: { 
+      type: Date, 
+      default: null 
+    },   // When supplier delivers the order
+    completedAt: { 
+      type: Date, 
+      default: null 
+    },   // When order is completed
+    shippedAt: { 
+      type: Date, 
+      default: null 
+    },    // When order is shipped
+    approvedAt: { 
+      type: Date, 
+      default: null 
+    },   // When order is approved
+    rejectedAt: { 
+      type: Date, 
+      default: null 
+    },   // When order is rejected
   },
-  { timestamps: true }
+  { 
+    timestamps: true 
+  }
 );
+
+// Index for better query performance
+OrderSchema.index({ orderType: 1, orderStatus: 1 });
+OrderSchema.index({ artisanId: 1, orderType: 1 });
+OrderSchema.index({ supplierId: 1, orderType: 1 });
+OrderSchema.index({ createdBy: 1 });
+OrderSchema.index({ receivedAt: 1 });
+OrderSchema.index({ deliveredAt: 1 });
 
 export default mongoose.model("Order", OrderSchema);
