@@ -404,7 +404,7 @@ router.put("/update-status/:id", verifyToken, async (req, res) => {
 router.put("/update-payment-status/:id", verifyToken, async (req, res) => {
   try {
     const { paymentStatus } = req.body;
-    const validStatuses = ["pending", "approved", "rejected", "paid"]; // ✅ ADDED "paid"
+    const validStatuses = ["pending", "approved", "rejected", "paid", "received"]; // ✅ ADDED "paid"
     if (!validStatuses.includes(paymentStatus)) {
       return res.status(400).json({
         success: false,
